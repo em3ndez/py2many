@@ -1,64 +1,115 @@
-name: CI
+name: Flexible Matrix
 
 # Controls when the action will run.
 on:
-  # Triggers the workflow on push or pull request events but only for the main branch
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
+    inputs:
+      focus:
+        type: choice
+        description: 'Which langauges to test'
+        default: ''
+        options:
+        - cpp
+        - dart
+        - go
+        - julia
+        - kotlin
+        - nim
+        - smt
+        - vlang
+        - dlang
+        - mojo
+        - ''
+      os:
+        type: choice
+        description: 'Which OSes to test'
+        default: 'ubuntu-24.04'
+        options:
+        - ubuntu-22.04
+        - ubuntu-24.04
+        - macos-12
+        - windows-2022
+      python_version:
+        description: 'Which python versions to test'
+        default: '["3.12"]'
 
+# Cancel previous jobs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FOCUS: ${{ github.event.inputs.focus }}
 jobs:
   build:
 
     strategy:
       matrix:
-        os:
-          - ubuntu-18.04
-          - macos-10.15
-          - windows-2019
-    runs-on: ${{ matrix.os }}
+        python-version: ${{ fromJSON(github.event.inputs.python_version)}}
+    runs-on: ${{ github.event.inputs.os }}
 
     steps:
-      - uses: actions/checkout@v2
-      - uses: subosito/flutter-action@v1
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        if: ${{ !env.FOCUS || env.FOCUS == 'kotlin' }}
         with:
-          channel: 'stable'
-      - uses: julia-actions/setup-julia@v1
+          distribution: adopt
+          java-version: 15
+
+      - name: Add missing dependencies on act Medium runner
+        if: ${{ env.ACT }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+              clang-format \
+              powershell \
+            && true
+
+      - uses: subosito/flutter-action@v2
+        if: ${{ !env.FOCUS || env.FOCUS == 'dart' }}
+        with:
+          flutter-version: '3.22.3'
+
+      - uses: julia-actions/setup-julia@v2
+        if: ${{ !env.FOCUS || env.FOCUS == 'julia' }}
+
       - uses: fwilhe2/setup-kotlin@main
-      - uses: jiro4989/setup-nim-action@v1
-      - uses: actions/setup-go@v2
+        if: ${{ !env.FOCUS || env.FOCUS == 'kotlin' }}
+      - name: Set KOTLIN_HOME
+        if: ${{ !env.FOCUS || env.FOCUS == 'kotlin' }}
+        shell: bash
+        run: |
+          echo KOTLIN_HOME=$(kotlin -e 'System.getProperty("kotlin.home")') >> $GITHUB_ENV
+
+      - uses: jiro4989/setup-nim-action@v2
+        if: ${{ !env.FOCUS || env.FOCUS == 'nim' }}
+      - uses: actions/setup-go@v5
+        if: ${{ !env.FOCUS || env.FOCUS == 'go' }}
         # Needed as https://github.com/actions/setup-go/pull/89 is not merged
         with:
-          go-version: '1.15'
-      - uses: actions/setup-python@v2
+          go-version: '1.21.5'
+      - uses: fabasoad/setup-mojo-action@v1
+        if: ${{ !env.FOCUS || env.FOCUS == 'mojo' }}
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.8'
-      - name: Install V
-        shell: bash
-        env:
-          RELEASE: weekly.2021.29
-        run: |
-          FILE=v_$(echo ${RUNNER_OS} | tr '[:upper:]' '[:lower:]').zip
-          (cd /tmp && curl -sSLO https://github.com/vlang/v/releases/download/${RELEASE}/${FILE})
-          (cd /tmp && unzip ${FILE})
-          if [ "$RUNNER_OS" != "Windows" ]; then
-            (cd /usr/local/bin && sudo ln -s /tmp/v/v)
-          fi
+          python-version: ${{ matrix.python-version }}
+
       - name: Set up Visual Studio shell
         uses: egor-tensin/vs-shell@v2
 
       - name: Install go packages
+        if: ${{ !env.FOCUS || env.FOCUS == 'go' }}
         shell: bash
         run: |
-          (go get github.com/hgfischer/go-iter \
-           && go get github.com/google/go-cmp/cmp \
-           && go get github.com/adsharma/py2many/pygo/runtime \
-           && go get github.com/mgechev/revive \
-          )
+          scripts/go-setup.sh
+
+      - name: Install SMT packages
+        if: ${{ !env.FOCUS || env.FOCUS == 'smt' }}
+        shell: bash
+        run: |
+          echo "$(pwd)/scripts/" >> $GITHUB_PATH
 
       - name: Install tox
         run: |
@@ -66,86 +117,135 @@ jobs:
           pip3 install setuptools tox
 
       - name: Install Julia packages
+        if: ${{ !env.FOCUS || env.FOCUS == 'julia' }}
         shell: bash
         run: |
           julia -e 'using Pkg; Pkg.add("JuliaFormatter")'
           julia -e 'using Pkg; Pkg.add("SuperEnum")'
+          JULIA_FORMATTER_ROOT=$(julia -e 'import JuliaFormatter;print(dirname(dirname(pathof(JuliaFormatter))));')
+          echo "${JULIA_FORMATTER_ROOT}/bin/" >> $GITHUB_PATH
 
       - name: Install dependencies for ${{ runner.os }}.
         shell: bash
         run: |
+          set -ex
           if [ "$RUNNER_OS" == "Linux" ]; then
-              sudo apt-get install --yes astyle
-              curl -sSLO https://github.com/pinterest/ktlint/releases/download/0.41.0/ktlint
-              chmod a+x ktlint
-              sudo mv ktlint /usr/local/bin/
-              (cd /usr/local/bin && sudo ln -s $(find ~/.julia -name format.jl))
-              (cd /usr/local/bin && sudo ln -s $HOME/go/bin/golint)
+              sudo apt-get install --yes \
+                  astyle \
+                  catch2 \
+                  clang-14 \
+                  libc++-14-dev \
+                  libc++abi-14-dev \
+                  z3 \
+                && true
+              pip3 install conan
+              echo "CXX=clang++-14" >> $GITHUB_ENV
           elif [ "$RUNNER_OS" == "macOS" ]; then
-              brew tap holgerbrandl/tap https://github.com/holgerbrandl/homebrew-tap
-              brew install clang-format kscript ktlint astyle
-              (cd /usr/local/bin && ln -s $(find ~/.julia -name format.jl))
-              (cd /usr/local/bin && ln -s $HOME/go/bin/golint)
+              brew install \
+                  astyle \
+                  catch2 \
+                  clang-format \
+                  conan \
+                  z3 \
+                && true
+              # brew's vlang 0.2.4 is too old, and has no @head
           elif [ "$RUNNER_OS" == "Windows" ]; then
-              choco install zip curl astyle llvm
+              choco install \
+                  astyle \
+                  conan \
+                  curl \
+                  llvm \
+                  z3 \
+                  zip \
+                && true
+              echo "C:/Program Files/Conan/conan/" >> $GITHUB_PATH
           fi
-          curl -s "https://get.sdkman.io" | bash
-          source "$HOME/.sdkman/bin/sdkman-init.sh"
-          sdk install kscript
+          echo "WHICH_V=$(which v 2>/dev/null)" >> $GITHUB_ENV
+
+      - name: Install C++ packages
+        if: ${{ !env.FOCUS || env.FOCUS == 'cpp' }}
+        shell: bash
+        run: |
+          scripts/cpp-setup.sh
+
+      - name: Install V
+        if: ${{ !env.WHICH_V && (!env.FOCUS || env.FOCUS == 'vlang') }}
+        uses: vlang/setup-v@v1.4
+        with:
+          token: ${{ github.token }}
+
+      - name: Install V packages
+        if: ${{ !env.FOCUS || env.FOCUS == 'vlang' }}
+        shell: bash
+        run: |
+          v install div72.vexc
+
+      - name: Install Dlang
+        if: ${{ !env.FOCUS || env.FOCUS == 'dlang' }}
+        uses: dlang-community/setup-dlang@v2
+        with:
+          token: ${{ github.token }}
+
+      - name: Install D Packages
+        if: ${{ !env.FOCUS || env.FOCUS == 'dlang' }}
+        shell: bash
+        run: |
+          mkdir -p tests/build && cd tests/build
+          dub init -n .
+          dub add dfmt
+          dub fetch dfmt --cache=local
 
       - name: Install dart dependencies
+        if: ${{ !env.FOCUS || env.FOCUS == 'dart' }}
         shell: bash
         run: |
-          dart --version
-          # tests/build here must be the same as defined in test_cli
-          (dart create --no-pub -t package-simple tests/build && cd tests/build \
-           && dart pub add collection \
-           && dart pub add sprintf \
-           && dart pub add tuple \
-           && sed -i.bak '/test:/d' pubspec.yaml \
-           && flutter pub add vnum)
+          scripts/dart-setup.sh
 
-      - name: Install cargo-script
-        run: cargo install cargo-script
+      - name: Install rust nightly toolchain
+        if: ${{ !env.FOCUS || env.FOCUS == 'rust' }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-01-01
+          components: clippy,rustfmt
 
-      - name: Install smt dependencies
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" != "Windows" ]; then
-            (curl -sLO https://raw.githubusercontent.com/greglook/cljstyle/main/script/install-cljstyle
-             sed -i.bak 's/--overwrite//' install-cljstyle
-             chmod +x install-cljstyle
-             sudo ./install-cljstyle)
-          fi
       - name: Run tox
         shell: bash
-        # sdkman init can be replaced with actions setup when the following is fixed
-        # https://github.com/sdkman/sdkman-action/issues/8
         run: |
-          source "$HOME/.sdkman/bin/sdkman-init.sh"
-          LINT=1
+          set -ex
           if [ "$RUNNER_OS" == "Windows" ]; then
             export PATH="$PATH:/C/Program Files/LLVM/bin:/tmp/v"
           fi
-          tox
+          PYTHON_VERSION="${{ matrix.python-version }}"
+          export TOXENV="py${PYTHON_VERSION//.}"
+          if [ "$FOCUS" ]; then
+            tox -- -k "$FOCUS"
+          else
+            tox
+          fi
 
   lint:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Install linters
-        run: pip install black pyflakes cpplint
+        run: pip install black cpplint isort flake8
 
-      - name: Remove tests/cases/*.py & tests/expected/*.py
-        run: rm tests/cases/*.py tests/expected/*.py tests/dir_cases/test1-*-expected/*.py
+      - name: Remove expected .py files
+        run: rm tests/expected/*.py tests/dir_cases/test1-*-expected/*.py
+
+      - name: Run isort
+        run: isort --check --diff */ *.py
 
       - name: Run black
         run: black --check */ *.py
 
-      - name: Run pyflakes
-        run: pyflakes */ *.py
+      - name: Remove test case .py files
+        run: rm tests/cases/*.py
+
+      - name: Run flake8
+        run: flake8 .
 
       - name: Run cpplint
         run: cpplint --filter=-legal/copyright,-whitespace/semicolon,-runtime/reference tests/expected/*.cpp

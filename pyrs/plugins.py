@@ -1,22 +1,23 @@
-import io
-import os
 import ast
 import functools
+import io
 import math
-import time
+import os
 import random
 import sys
 import textwrap
-
+import time
 from tempfile import NamedTemporaryFile
 from typing import Callable, Dict, List, Tuple, Union
 
 try:
-    from argparse_dataclass import dataclass as ap_dataclass
     from argparse_dataclass import ArgumentParser
+    from argparse_dataclass import dataclass as ap_dataclass
 except:
     ArgumentParser = "ArgumentParser"
     ap_dataclass = "ap_dataclass"
+
+from py2many.analysis import get_id
 
 
 class RustTranspilerPlugins:
@@ -111,21 +112,21 @@ class RustTranspilerPlugins:
 
     def visit_range(self, node, vargs: List[str]) -> str:
         if len(node.args) == 1:
-            return "(0..{})".format(vargs[0])
+            return f"(0..{vargs[0]})"
         elif len(node.args) == 2:
-            return "({}..{})".format(vargs[0], vargs[1])
+            return f"({vargs[0]}..{vargs[1]})"
         elif len(node.args) == 3:
-            return "({}..{}).step_by({})".format(vargs[0], vargs[1], vargs[2])
+            return f"({vargs[0]}..{vargs[1]}).step_by({vargs[2]})"
 
         raise Exception(
-            "encountered range() call with unknown parameters: range({})".format(vargs)
+            f"encountered range() call with unknown parameters: range({vargs})"
         )
 
     def visit_print(self, node, vargs: List[str]) -> str:
         placeholders = []
         for n in node.args:
             placeholders.append("{}")
-        return 'println!("{0}",{1});'.format(" ".join(placeholders), ", ".join(vargs))
+        return 'println!("{}",{});'.format(" ".join(placeholders), ", ".join(vargs))
 
     def visit_exit(self, node, vargs) -> str:
         self._allows.add("unreachable_code")
@@ -138,9 +139,16 @@ class RustTranspilerPlugins:
         if hasattr(node.args[0], "container_type"):
             node.result_type = True
             return f"{vargs[0]}.iter().{min_max}()"
-        else:
+
+        annotation = getattr(node.args[0], "annotation", None)
+        if annotation and get_id(annotation) == "float":
+            self._usings.add("float-ord::FloatOrd")
+            vargs = [f"FloatOrd({arg})" for arg in vargs]
             all_vargs = ", ".join(vargs)
-            return f"cmp::{min_max}({all_vargs})"
+            return f"cmp::{min_max}({all_vargs}).0"
+
+        all_vargs = ", ".join(vargs)
+        return f"cmp::{min_max}({all_vargs})"
 
     @staticmethod
     def visit_cast(node, vargs, cast_to: str) -> str:
@@ -156,23 +164,30 @@ class RustTranspilerPlugins:
         return f"block_on({vargs[0]})"
 
 
+FIXED_SIZE_INT_MAP = {
+    fixed: functools.partial(RustTranspilerPlugins.visit_cast, cast_to=fixed)
+    for fixed in ("i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64")
+}
+
 # small one liners are inlined here as lambdas
 SMALL_DISPATCH_MAP = {
     "str": lambda n, vargs: f"&{vargs[0]}.to_string()" if vargs else '""',
-    "len": lambda n, vargs: f"{vargs[0]}.len()",
+    "len": lambda n, vargs: f"{vargs[0]}.len() as i32",
     "enumerate": lambda n, vargs: f"{vargs[0]}.iter().enumerate()",
     "sum": lambda n, vargs: f"{vargs[0]}.iter().sum()",
     "int": functools.partial(RustTranspilerPlugins.visit_cast, cast_to="i32"),
     "bool": lambda n, vargs: f"({vargs[0]} != 0)" if vargs else "false",
     "float": functools.partial(RustTranspilerPlugins.visit_cast, cast_to="f64"),
     # as usize below is a hack to pass comb_sort.rs. Need a better solution
-    "floor": lambda n, vargs: f"{vargs[0]}.floor() as usize",
+    "floor": lambda n, vargs: f"{vargs[0]}.floor() as i32",
     "reversed": lambda n, vargs: f"{vargs[0]}.iter().rev()",
     "map": lambda n, vargs: f"{vargs[1]}.iter().map({vargs[0]})",
     "filter": lambda n, vargs: f"{vargs[1]}.into_iter().filter({vargs[0]})",
     "list": lambda n, vargs: f"{vargs[0]}.collect::<Vec<_>>()",
     "asyncio.run": RustTranspilerPlugins.visit_asyncio_run,
+    **FIXED_SIZE_INT_MAP,
 }
+
 
 SMALL_USINGS_MAP = {
     "asyncio.run": "futures::executor::block_on",
@@ -186,7 +201,11 @@ DISPATCH_MAP = {
     "print": RustTranspilerPlugins.visit_print,
 }
 
-MODULE_DISPATCH_TABLE = {"tempfile.NamedTemporaryFile": "tempfile::NamedTempFile"}
+MODULE_DISPATCH_TABLE = {
+    "tempfile.NamedTemporaryFile": "tempfile::NamedTempFile",
+    "pyanyhow.Result": "anyhow::Result",
+    "pyanyhow.Error": "anyhow::Error",
+}
 
 DECORATOR_DISPATCH_TABLE = {ap_dataclass: RustTranspilerPlugins.visit_ap_dataclass}
 
@@ -206,6 +225,7 @@ FUNC_DISPATCH_TABLE: Dict[FuncType, Tuple[Callable, bool]] = {
     "f.read": (RustTranspilerPlugins.visit_read, True),
     "f.write": (RustTranspilerPlugins.visit_write, True),
     "f.close": (lambda self, node, vargs: "drop(f)", False),
+    "Error": (lambda self, node, vargs: f"anyhow::bail!({vargs[0]})", False),
     open: (RustTranspilerPlugins.visit_open, True),
     NamedTemporaryFile: (RustTranspilerPlugins.visit_named_temp_file, True),
     io.TextIOWrapper.read: (RustTranspilerPlugins.visit_textio_read, True),

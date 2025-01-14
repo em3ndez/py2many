@@ -1,16 +1,23 @@
 //! ```cargo
 //! [package]
-//! edition = "2018"
+//! edition = "2021"
 //! [dependencies]
 //! anyhow = "*"
 //! strum = "*"
 //! strum_macros = "*"
 //! ```
 
+#![allow(clippy::assertions_on_constants)]
+#![allow(clippy::bool_comparison)]
 #![allow(clippy::collapsible_else_if)]
+#![allow(clippy::comparison_to_empty)]
 #![allow(clippy::double_parens)] // https://github.com/adsharma/py2many/issues/17
+#![allow(clippy::eq_op)]
+#![allow(clippy::let_with_type_underscore)]
 #![allow(clippy::map_identity)]
 #![allow(clippy::needless_return)]
+#![allow(clippy::nonminimal_bool)]
+#![allow(clippy::partialeq_to_none)]
 #![allow(clippy::print_literal)]
 #![allow(clippy::ptr_arg)]
 #![allow(clippy::redundant_static_lifetimes)] // https://github.com/adsharma/py2many/issues/266
@@ -29,9 +36,9 @@ extern crate strum;
 extern crate strum_macros;
 use anyhow::Result;
 use std::collections::HashMap;
-use strum_macros::{Display, EnumString, EnumVariantNames};
+use strum_macros::{Display, EnumString, VariantNames};
 
-#[derive(Clone, Debug, Display, EnumString, EnumVariantNames, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Display, EnumString, VariantNames, Eq, Hash, PartialEq)]
 pub enum Colors {
     #[strum(serialize = "red")]
     RED,
@@ -56,7 +63,7 @@ pub fn show() {
     } else {
         println!("{}", "Not green");
     }
-    println!("{}", color_map.len());
+    println!("{}", color_map.len() as i32);
 }
 
 pub fn main() -> Result<()> {

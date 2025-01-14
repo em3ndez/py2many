@@ -1,4 +1,5 @@
 import ast
+
 from .scope import ScopeMixin
 
 
@@ -141,6 +142,7 @@ class VariableTransformer(ast.NodeTransformer, ScopeMixin):
             if isinstance(target, ast.Name):
                 target.assigned_from = node
                 self.scope.vars.append(target)
+        self.generic_visit(node)
         return node
 
     def visit_AnnAssign(self, node):
@@ -148,6 +150,7 @@ class VariableTransformer(ast.NodeTransformer, ScopeMixin):
         if isinstance(target, ast.Name):
             target.assigned_from = node
             self.scope.vars.append(target)
+        self.generic_visit(node)
         return node
 
     def visit_AugAssign(self, node):
@@ -155,6 +158,7 @@ class VariableTransformer(ast.NodeTransformer, ScopeMixin):
         if isinstance(target, ast.Name):
             target.assigned_from = node
             self.scope.vars.append(target)
+        self.generic_visit(node)
         return node
 
 

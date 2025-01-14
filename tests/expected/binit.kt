@@ -1,5 +1,9 @@
 
-fun bisect_right(data_: Array<Int>, item: Int): Int {
+
+fun bisect_right(
+    data_: Array<Int>,
+    item: Int,
+): Int {
     var low = 0
     var high: Int = data_.size.toInt()
     while (low < high) {
@@ -13,7 +17,10 @@ fun bisect_right(data_: Array<Int>, item: Int): Int {
     return low
 }
 
-fun bin_it(limits: Array<Int>, data_: Array<Int>): Array<Int> {
+fun bin_it(
+    limits: Array<Int>,
+    data_: Array<Int>,
+): Array<Int> {
     var bins = arrayOf(0)
     for (_x in limits) {
         bins += 0

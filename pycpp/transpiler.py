@@ -1,28 +1,16 @@
 import ast
 import textwrap
+from typing import List, Tuple
 
-from .tracer import decltype
-from .clike import CLikeTranspiler
-from .plugins import (
-    ATTR_DISPATCH_TABLE,
-    CLASS_DISPATCH_TABLE,
-    FUNC_DISPATCH_TABLE,
-    MODULE_DISPATCH_TABLE,
-    DISPATCH_MAP,
-    SMALL_DISPATCH_MAP,
-    SMALL_USINGS_MAP,
-)
-
-
-from py2many.analysis import add_imports, is_global, is_void_function, get_id
+from py2many.analysis import add_imports, get_id, is_global, is_void_function
 from py2many.ast_helpers import create_ast_block
 from py2many.clike import _AUTO_INVOKED, class_for_typename
-from py2many.context import add_variable_context, add_list_calls
+from py2many.context import add_list_calls, add_variable_context
 from py2many.declaration_extractor import DeclarationExtractor
 from py2many.exceptions import AstNotImplementedError
 from py2many.inference import InferMeta
-from py2many.scope import add_scope_context
 from py2many.rewriters import PythonMainRewriter
+from py2many.scope import add_scope_context
 from py2many.tracer import (
     defined_before,
     is_class_or_module,
@@ -31,7 +19,17 @@ from py2many.tracer import (
     is_self_arg,
 )
 
-from typing import List, Tuple
+from .clike import CLikeTranspiler
+from .plugins import (
+    ATTR_DISPATCH_TABLE,
+    CLASS_DISPATCH_TABLE,
+    DISPATCH_MAP,
+    FUNC_DISPATCH_TABLE,
+    MODULE_DISPATCH_TABLE,
+    SMALL_DISPATCH_MAP,
+    SMALL_USINGS_MAP,
+)
+from .tracer import decltype
 
 _AUTO = "auto()"
 
@@ -54,7 +52,7 @@ def transpile(source, headers=False, testing=False):
 
     buf = []
     if testing:
-        buf += ['#include "catch.hpp"']
+        buf += ["#include <catch2/catch_test_macros.hpp>"]
         transpiler.use_catch_test_cases = True
 
     if headers:
@@ -69,13 +67,13 @@ def transpile(source, headers=False, testing=False):
 
 
 def generate_catch_test_case(node, body):
-    funcdef = 'TEST_CASE("{0}")'.format(node.name)
+    funcdef = f'TEST_CASE("{node.name}")'
     return funcdef + " {\n" + body + "\n}"
 
 
 def generate_lambda_fun(node, body):
-    params = ["auto {0}".format(param.id) for param in node.args.args]
-    funcdef = "auto {0} = []({1})".format(node.name, ", ".join(params))
+    params = [f"auto {param.id}" for param in node.args.args]
+    funcdef = "auto {} = []({})".format(node.name, ", ".join(params))
     return funcdef + " {\n" + body + "\n};"
 
 
@@ -110,20 +108,11 @@ class CppListComparisonRewriter(ast.NodeTransformer):
 class CppTranspiler(CLikeTranspiler):
     NAME = "cpp"
 
-    CONTAINER_TYPES = {
-        "List": "std::vector",
-        "Dict": "std::map",
-        "Set": "std::set",
-        "Optional": "std::optional",
-    }
-
     def __init__(self, extension: bool = False, no_prologue: bool = False):
         super().__init__()
-        # TODO: include only when needed
         self._headers = []
-        self._usings = set([])
+        self._usings = {"<cstdint>"}
         self.use_catch_test_cases = False
-        self._container_type_map = self.CONTAINER_TYPES
         self._extension = extension
         self._no_prologue = no_prologue
         self._dispatch_map = DISPATCH_MAP
@@ -133,25 +122,27 @@ class CppTranspiler(CLikeTranspiler):
         self._attr_dispatch_table = ATTR_DISPATCH_TABLE
         self._main_signature_arg_names = ["argc", "argv"]
 
+    def _reset(self):
+        use_catch_test_cases = self.use_catch_test_cases
+        super()._reset()
+        self.use_catch_test_cases = use_catch_test_cases
+
+    def _get_nolint_suffix(self, nolint="build/include_order"):
+        return f"  // NOLINT({nolint})" if not self._no_prologue else ""
+
     def usings(self):
         usings = sorted(list(set(self._usings)))
-        lint_exception = (
-            "  // NOLINT(build/include_order)" if not self._no_prologue else ""
-        )
+        lint_exception = self._get_nolint_suffix()
         uses = "\n".join(f"#include {mod}{lint_exception}" for mod in usings)
         return uses
 
     def headers(self, meta: InferMeta):
-        lint_exception = (
-            "  // NOLINT(build/include_order)" if not self._no_prologue else ""
-        )
-        self._headers.append(f'#include "pycpp/runtime/sys.h"{lint_exception}')
-        self._headers.append(f'#include "pycpp/runtime/builtins.h"{lint_exception}')
+        lint_exception = self._get_nolint_suffix()
         if self.use_catch_test_cases:
-            self._headers.append(f'#include "pycpp/runtime/catch.hpp"{lint_exception}')
+            self._headers.append("#include <catch2/catch_test_macros.hpp>")
         if meta.has_fixed_width_ints:
             self._headers.append("#include <stdint.h>")
-        return "\n".join(self._headers)
+        return "\n".join([f"{line}{lint_exception}" for line in self._headers])
 
     def visit_FunctionDef(self, node) -> str:
         body = "\n".join([self.visit(n) for n in node.body])
@@ -183,7 +174,7 @@ class CppTranspiler(CLikeTranspiler):
             typename = typenames[i]
             arg = args[i]
             if typename == "T":
-                typename = "T{0}".format(index)
+                typename = f"T{index}"
                 typedecls.append(typename)
                 index += 1
             if is_python_main and arg in ["argv"]:
@@ -196,10 +187,6 @@ class CppTranspiler(CLikeTranspiler):
             template = f"template <{typedecls_str}>"
 
         if is_python_main:
-            body = (
-                "pycpp::sys::argv = std::vector<std::string>(argv, argv + argc);\n"
-                + body
-            )
             template = ""
 
         if not is_void_function(node):
@@ -215,6 +202,9 @@ class CppTranspiler(CLikeTranspiler):
         funcdef = f"{template}{return_type} {node.name}({args}) {{"
 
         return funcdef + "\n" + body + "}\n"
+
+    def visit_Global(self, node) -> str:
+        return ""
 
     def visit_Attribute(self, node) -> str:
         attr = node.attr
@@ -269,7 +259,7 @@ class CppTranspiler(CLikeTranspiler):
         index = 0
         for declaration, typename in declarations.items():
             if typename == None:
-                typename = "ST{0}".format(index)
+                typename = f"ST{index}"
                 index += 1
             fields.append(f"{typename} {declaration}")
 
@@ -331,9 +321,8 @@ class CppTranspiler(CLikeTranspiler):
             )
         fields = "\n".join([f for f in fields])
         definitions = "\n".join([d for d in definitions])
-        lint_exception = (
-            "  // NOLINT(runtime/explicit)" if not self._no_prologue else ""
-        )
+        lint_exception = self._get_nolint_suffix("runtime/explicit")
+        self._usings.add("<string>")
         return textwrap.dedent(
             f"""\
             class {node.name} : public std::string {{
@@ -370,7 +359,7 @@ class CppTranspiler(CLikeTranspiler):
         target = self.visit(node.target)
         it = self.visit(node.iter)
         buf = []
-        buf.append("for(auto {0} : {1}) {{".format(target, it))
+        buf.append(f"for(auto {target} : {it}) {{")
         buf.extend([self.visit(c) for c in node.body])
         buf.append("}")
         return "\n".join(buf)
@@ -442,8 +431,8 @@ class CppTranspiler(CLikeTranspiler):
         return "\n".join(buf)
 
     def visit_If(self, node) -> str:
-        body_vars = set([get_id(v) for v in node.scopes[-1].body_vars])
-        orelse_vars = set([get_id(v) for v in node.scopes[-1].orelse_vars])
+        body_vars = {get_id(v) for v in node.scopes[-1].body_vars}
+        orelse_vars = {get_id(v) for v in node.scopes[-1].orelse_vars}
         node.common_vars = body_vars.intersection(orelse_vars)
 
         var_definitions = []
@@ -452,7 +441,7 @@ class CppTranspiler(CLikeTranspiler):
             var_type = self._typename_from_annotation(definition)
             if var_type == self._default_type:
                 var_type = decltype(definition)
-            var_definitions.append("{0} {1};\n".format(var_type, cv))
+            var_definitions.append(f"{var_type} {cv};\n")
 
         return "".join(var_definitions) + super().visit_If(node)
 
@@ -460,9 +449,9 @@ class CppTranspiler(CLikeTranspiler):
         if isinstance(node.op, ast.USub):
             if isinstance(node.operand, (ast.Call, ast.Num)):
                 # Shortcut if parenthesis are not needed
-                return "-{0}".format(self.visit(node.operand))
+                return f"-{self.visit(node.operand)}"
             else:
-                return "-({0})".format(self.visit(node.operand))
+                return f"-({self.visit(node.operand)})"
         else:
             return super().visit_UnaryOp(node)
 
@@ -472,7 +461,8 @@ class CppTranspiler(CLikeTranspiler):
             and isinstance(node.op, ast.Mult)
             and isinstance(node.right, ast.Num)
         ):
-            return "std::vector ({0},{1})".format(
+            self._usings.add("<vector>")
+            return "std::vector ({},{})".format(
                 self.visit(node.right), self.visit(node.left.elts[0])
             )
         else:
@@ -553,13 +543,13 @@ class CppTranspiler(CLikeTranspiler):
         if hasattr(node, "is_annotation"):
             if value in self.CONTAINER_TYPES:
                 value = self.CONTAINER_TYPES[value]
-            return "{0}<{1}>".format(value, index)
+            return f"{value}<{index}>"
         return f"{value}[{index}]"
 
     def visit_Tuple(self, node) -> str:
-        self._headers.append("#include <tuple>")
+        self._usings.add("<tuple>")
         elts = [self.visit(e) for e in node.elts]
-        return "std::make_tuple({0})".format(", ".join(elts))
+        return "std::make_tuple({})".format(", ".join(elts))
 
     def visit_Try(self, node, finallybody=None) -> str:
         self._usings.add("<iostream>")
@@ -587,31 +577,28 @@ class CppTranspiler(CLikeTranspiler):
 
         return "\n".join(buf)
 
-    def visit_ExceptHandler(self, node) -> str:
-        return "ExceptHandler /*unimplemented()*/"
-
     def visit_Assert(self, node) -> str:
         if not self.use_catch_test_cases:
             self._usings.add("<cassert>")
-            return "assert({0});".format(self.visit(node.test))
-        return "REQUIRE({0});".format(self.visit(node.test))
+            return f"assert({self.visit(node.test)});"
+        return f"REQUIRE({self.visit(node.test)});"
 
     def _visit_AssignOne(self, node, target) -> str:
         if isinstance(target, ast.Tuple):
             elts = [self.visit(e) for e in target.elts]
             value = self.visit(node.value)
-            return "std::tie({0}) = {1};".format(", ".join(elts), value)
+            return "std::tie({}) = {};".format(", ".join(elts), value)
 
         if isinstance(node.scopes[-1], ast.If) and isinstance(target, ast.Name):
             outer_if = node.scopes[-1]
             if target.id in outer_if.common_vars:
                 value = self.visit(node.value)
-                return "{0} = {1};".format(target.id, value)
+                return f"{target.id} = {value};"
 
         if isinstance(target, ast.Subscript):
             target = self.visit(target)
             value = self.visit(node.value)
-            return "{0} = {1};".format(target, value)
+            return f"{target} = {value};"
 
         definition = node.scopes.parent_scopes.find(get_id(target))
         if definition is None:
@@ -619,19 +606,20 @@ class CppTranspiler(CLikeTranspiler):
         if isinstance(target, ast.Name) and defined_before(definition, node):
             target = self.visit(target)
             value = self.visit(node.value)
-            return "{0} = {1};".format(target, value)
+            return f"{target} = {value};"
 
         if isinstance(node.value, ast.List):
             element_type = self._get_element_type(node.value)
             if element_type == self._default_type:
                 typename = decltype(node)
             else:
+                self._usings.add("<vector>")
                 typename = f"std::vector<{element_type}>"
         else:
             typename = self._typename_from_annotation(target)
         target = self.visit(target)
         value = self.visit(node.value)
-        lint_exception = "  // NOLINT(runtime/string)" if not self._no_prologue else ""
+        lint_exception = self._get_nolint_suffix("runtime/string")
         if typename == "std::string" and is_global(node):
             return f"{typename} {target} = {value};{lint_exception}"
 
@@ -647,19 +635,10 @@ class CppTranspiler(CLikeTranspiler):
             value = self.visit(n)
             if isinstance(n, ast.List) or isinstance(n, ast.Tuple):
                 buf.append(
-                    "std::cout << {0} << std::endl;".format(
+                    "std::cout << {} << std::endl;".format(
                         " << ".join([self.visit(el) for el in n.elts])
                     )
                 )
             else:
-                buf.append("std::cout << {0} << std::endl;".format(value))
+                buf.append(f"std::cout << {value} << std::endl;")
         return "\n".join(buf)
-
-    def visit_GeneratorExp(self, node) -> str:
-        return self.visit_unsupported_body(node, "generator exp", [])
-
-    def visit_Raise(self, node) -> str:
-        return self.visit_unsupported_body(node, "raise", [])
-
-    def visit_Starred(self, node) -> str:
-        return self.visit_unsupported_body(node, "starred", [])

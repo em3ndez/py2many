@@ -1,10 +1,9 @@
 import ast
 from typing import Dict, Set
 
-from .inference import V_TYPE_MAP, V_WIDTH_RANK
-
 from py2many.clike import CLikeTranspiler as CommonCLikeTranspiler
 
+from .inference import V_CONTAINER_TYPE_MAP, V_TYPE_MAP, V_WIDTH_RANK
 
 # allowed as names in Python but treated as keywords in V
 v_keywords: Set[str] = frozenset(
@@ -95,7 +94,8 @@ def v_symbol(node: ast.AST) -> str:
 class CLikeTranspiler(CommonCLikeTranspiler):
     def __init__(self):
         super().__init__()
-        self._type_map = V_TYPE_MAP
+        CommonCLikeTranspiler._type_map = V_TYPE_MAP
+        CommonCLikeTranspiler._container_type_map = V_CONTAINER_TYPE_MAP
         self._statement_separator: str = ""
 
     def visit(self, node: ast.AST) -> str:
@@ -119,6 +119,13 @@ class CLikeTranspiler(CommonCLikeTranspiler):
 
         left_rank: int = V_WIDTH_RANK.get(left_type, -1)
         right_rank: int = V_WIDTH_RANK.get(right_type, -1)
+
+        if (
+            isinstance(node.op, ast.Mult)
+            and left_type == "string"
+            and right_type == "int"
+        ):
+            return f"({left}.repeat({right}))"
 
         if left_rank > right_rank:
             right = f"{left_type}({right})"

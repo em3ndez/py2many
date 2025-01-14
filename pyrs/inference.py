@@ -1,15 +1,23 @@
 import ast
 import datetime
-import typing
+import io
 import types
-
-from ctypes import c_int8, c_int16, c_int32, c_int64
-from ctypes import c_uint8, c_uint16, c_uint32, c_uint64
+import typing
+from ctypes import (
+    c_int8,
+    c_int16,
+    c_int32,
+    c_int64,
+    c_uint8,
+    c_uint16,
+    c_uint32,
+    c_uint64,
+)
 
 from py2many.analysis import get_id, is_mutable
 from py2many.clike import class_for_typename
 from py2many.exceptions import AstUnrecognisedBinOp
-from py2many.inference import get_inferred_type, is_reference, InferTypesTransformer
+from py2many.inference import InferTypesTransformer, get_inferred_type, is_reference
 
 RUST_TYPE_MAP = {
     int: "i32",
@@ -25,6 +33,15 @@ RUST_TYPE_MAP = {
     c_uint16: "u16",
     c_uint32: "u32",
     c_uint64: "u64",
+    io.RawIOBase: "std::fs::File",
+}
+
+RUST_CONTAINER_TYPE_MAP = {
+    "List": "Vec",
+    "Dict": "HashMap",
+    "Set": "HashSet",
+    "Optional": "Option",
+    "Result": "Result",
 }
 
 # https://pyo3.rs/v0.13.2/conversions/tables.html
@@ -126,7 +143,7 @@ class InferRustTypesTransformer(ast.NodeTransformer):
             and not isinstance(node.op, ast.Div)
         ):
             node.annotation = left
-            node.go_annotation = map_type(left_id)
+            node.rust_annotation = map_type(left_id)
             return node
 
         if left_id == "int":

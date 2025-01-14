@@ -1,6 +1,6 @@
 # py2many: Python to many CLike languages transpiler
 
-![Build](https://github.com/adsharma/py2many/actions/workflows/main.yml/badge.svg)
+![Build](https://github.com/py2many/py2many/actions/workflows/fast.yaml/badge.svg)
 ![License](https://img.shields.io/github/license/adsharma/py2many?color=brightgreen)
 
 ## Why
@@ -29,22 +29,22 @@ a backend for your favorite language.
 
 ## Status
 
-Rust is the language where the focus of development has been. C++14 is historically
-the first language to be supported.
+Rust is the language where the focus of development has been.
 
-Preliminary support exists for Julia, Kotlin, Nim, Go and Dart.
+C++14 is historically the first language to be supported.
+C++17 is now required for some features.
+
+Preliminary support exists for Julia, Kotlin, Nim, Go, Dart, V, and D.
 
 py2many can also emit Python 3 code that includes inferred type annotations,
 and revisions to the syntax intended to simplify parsing of the code.
 
 ## History
 
-Based on Julian Konchunas' pyrs
-http://github.com/konchunas/pyrs
+Based on Julian Konchunas' [pyrs](http://github.com/konchunas/pyrs).
 
-Based on Lukas Martinelli Py14
-(https://github.com/lukasmartinelli/py14) and Py14/python-3
-(https://github.com/ProgVal/py14/tree/python-3) branch by Valentin
+Based on Lukas Martinelli [Py14](https://github.com/lukasmartinelli/py14)
+and [Py14/python-3](https://github.com/ProgVal/py14/tree/python-3) branch by Valentin
 Lorentz.
 
 ## Example
@@ -73,45 +73,57 @@ Transpiled code for other languages:
 
 https://github.com/adsharma/py2many/tree/main/tests/expected (fib*)
 
-
 ## Trying it out
 
 Requirements:
-- python 3
-- clang
-- rustc
+
+- Python 3.8+
 
 Local installation:
 
-```
-./setup.py install --user  # installs to $HOME/.local
+```sh
+pip3 install --user  # installs to $HOME/.local
 ```
 
 OR
 
-```
-sudo ./setup.py install  # installs systemwide
+```sh
+sudo pip3 install  # installs systemwide
 ```
 
 Add the py2many script to your $PATH and run:
 
 Transpiling:
 
-```
-py2many --cpp=1 /tmp/fib.py
-py2many --rust=1 /tmp/fib.py
-py2many --julia=1 /tmp/fib.py
-py2many --kotlin=1 /tmp/fib.py
-py2many --nim=1 /tmp/fib.py
-py2many --dart=1 /tmp/fib.py
-py2many --go=1 /tmp/fib.py
+```sh
+py2many --cpp=1 tests/cases/fib.py
+py2many --rust=1 tests/cases/fib.py
+py2many --julia=1 tests/cases/fib.py
+py2many --kotlin=1 tests/cases/fib.py
+py2many --nim=1 tests/cases/fib.py
+py2many --dart=1 tests/cases/fib.py
+py2many --go=1 tests/cases/fib.py
+py2many --dlang=1 tests/cases/fib.py
 ```
 
 Compiling:
 
-```
-clang fib.cpp
-rustc fib.rs
+```sh
+clang tests/expected/fib.cpp
+rustup run nightly cargo build -Zscript --manifest-path tests/expected/fib.rs
 ...
+dmd -run tests/cases/fib.d
 ```
 
+Many of the transpilers rely on a language specific formatter to parse the output and reformat it.
+Typically this is the most prominent formatter for the language, such as `rustfmt` for Rust.
+
+Most of the transpilers also rely on external libraries to provide bridges from
+Python constructs to the target language.
+
+The steps to install these external libraries can be found in `.github/workflows/main.yml`.
+
+# Contributing
+
+See [CONTRIBUTING.md](https://github.com/adsharma/py2many/blob/main/CONTRIBUTING.md)
+for how to test your changes and contribute to this project.

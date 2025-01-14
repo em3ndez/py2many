@@ -1,14 +1,21 @@
 //! ```cargo
 //! [package]
-//! edition = "2018"
+//! edition = "2021"
 //! [dependencies]
 //! anyhow = "*"
 //! ```
 
+#![allow(clippy::assertions_on_constants)]
+#![allow(clippy::bool_comparison)]
 #![allow(clippy::collapsible_else_if)]
+#![allow(clippy::comparison_to_empty)]
 #![allow(clippy::double_parens)] // https://github.com/adsharma/py2many/issues/17
+#![allow(clippy::eq_op)]
+#![allow(clippy::let_with_type_underscore)]
 #![allow(clippy::map_identity)]
 #![allow(clippy::needless_return)]
+#![allow(clippy::nonminimal_bool)]
+#![allow(clippy::partialeq_to_none)]
 #![allow(clippy::print_literal)]
 #![allow(clippy::ptr_arg)]
 #![allow(clippy::redundant_static_lifetimes)] // https://github.com/adsharma/py2many/issues/266
@@ -27,7 +34,7 @@ use anyhow::Result;
 use std::collections;
 
 pub fn bubble_sort(seq: &mut Vec<i32>) -> Vec<i32> {
-    let L = seq.len();
+    let L = seq.len() as i32;
     for _ in (0..L) {
         for n in (1..L) {
             if seq[n as usize] < seq[((n as i32) - 1) as usize] {

@@ -1,14 +1,21 @@
 //! ```cargo
 //! [package]
-//! edition = "2018"
+//! edition = "2021"
 //! [dependencies]
 //! anyhow = "*"
 //! ```
 
+#![allow(clippy::assertions_on_constants)]
+#![allow(clippy::bool_comparison)]
 #![allow(clippy::collapsible_else_if)]
+#![allow(clippy::comparison_to_empty)]
 #![allow(clippy::double_parens)] // https://github.com/adsharma/py2many/issues/17
+#![allow(clippy::eq_op)]
+#![allow(clippy::let_with_type_underscore)]
 #![allow(clippy::map_identity)]
 #![allow(clippy::needless_return)]
+#![allow(clippy::nonminimal_bool)]
+#![allow(clippy::partialeq_to_none)]
 #![allow(clippy::print_literal)]
 #![allow(clippy::ptr_arg)]
 #![allow(clippy::redundant_static_lifetimes)] // https://github.com/adsharma/py2many/issues/266
@@ -28,12 +35,12 @@ use std::cmp;
 use std::collections;
 
 pub fn comb_sort(seq: &mut Vec<i32>) -> Vec<i32> {
-    let mut gap = seq.len();
+    let mut gap = seq.len() as i32;
     let mut swap: bool = true;
-    while (gap as i32) > 1 || swap {
-        gap = cmp::max(1, ((gap as f64) / 1.25).floor() as usize);
+    while gap > 1 || swap {
+        gap = cmp::max(1, ((gap as f64) / 1.25).floor() as i32);
         swap = false;
-        for i in (0..(seq.len() - gap)) {
+        for i in (0..(seq.len() as i32 - gap)) {
             if seq[i as usize] > seq[(i + gap) as usize] {
                 ({
                     let (__tmp1, __tmp2) = (seq[(i + gap) as usize], seq[i as usize]);

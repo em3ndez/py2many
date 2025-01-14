@@ -1,12 +1,12 @@
-// @dart=2.9
+// @dart=3.4
 import 'package:sprintf/sprintf.dart';
 
 inline_pass() {
-/* pass */
+  /* pass */
 }
 
 inline_ellipsis() {
-/* ... */
+  /* ... */
 }
 
 int indexing() {

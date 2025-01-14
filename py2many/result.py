@@ -1,6 +1,6 @@
-from typing import TypeVar, Generic, Union
 from dataclasses import dataclass
 from enum import IntEnum
+from typing import Generic, TypeVar, Union
 
 T = TypeVar("T")
 E = TypeVar("E", Exception, IntEnum)
@@ -12,8 +12,11 @@ class Ok(Generic[T]):
 
 
 @dataclass
-class Err(Generic[E]):
+class Error(Generic[E]):
     error: E
 
 
-Result = Union[Ok[T], Err[E]]
+# std::result version
+StdResult = Union[Ok[T], Error[E]]
+# anyhow version
+Result = Ok[T]

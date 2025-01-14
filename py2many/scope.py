@@ -1,4 +1,5 @@
 import ast
+from collections.abc import Iterable
 from contextlib import contextmanager
 
 from py2many.analysis import get_id
@@ -9,7 +10,7 @@ def add_scope_context(node):
     return ScopeTransformer().visit(node)
 
 
-class ScopeMixin(object):
+class ScopeMixin:
     """
     Adds a scope property with the current scope (function, module)
     a node is part of.
@@ -34,7 +35,15 @@ class ScopeMixin(object):
             return None
 
     def _is_scopable_node(self, node):
-        scopes = [ast.Module, ast.ClassDef, ast.FunctionDef, ast.For, ast.If, ast.With]
+        scopes = [
+            ast.Module,
+            ast.ClassDef,
+            ast.FunctionDef,
+            ast.Lambda,
+            ast.For,
+            ast.If,
+            ast.With,
+        ]
         return len([s for s in scopes if isinstance(node, s)]) > 0
 
 
@@ -61,11 +70,20 @@ class ScopeList(list):
             if not defn and hasattr(scope, "orelse_vars"):
                 defn = find_definition(scope, "orelse_vars")
             if not defn and hasattr(scope, "body"):
-                defn = find_definition(scope, "body")
+                # special case lambda functions here. Their body is not a list
+                if isinstance(scope.body, Iterable):
+                    defn = find_definition(scope, "body")
+                else:
+                    return None
             if defn:
                 return defn
 
-    def find_import(self, lookup):
+    def find_import(self, lookup):  # pragma: no cover
+        """
+        Find definition of an import.
+
+        Currently unused.
+        """
         for scope in reversed(self):
             if hasattr(scope, "imports"):
                 for imp in scope.imports:

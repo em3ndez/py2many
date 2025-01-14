@@ -1,20 +1,28 @@
 import ast
-
-from ctypes import c_int8, c_int16, c_int32, c_int64
-from ctypes import c_uint8, c_uint16, c_uint32, c_uint64
+from ctypes import (
+    c_int8,
+    c_int16,
+    c_int32,
+    c_int64,
+    c_uint8,
+    c_uint16,
+    c_uint32,
+    c_uint64,
+)
 from dataclasses import dataclass
-from typing import cast, Set, Optional
+from typing import Optional, Set, cast
 
 from py2many.analysis import get_id
-from py2many.ast_helpers import create_ast_node, unparse
+from py2many.ast_helpers import create_ast_node
 from py2many.astx import LifeTime
 from py2many.clike import CLikeTranspiler, class_for_typename
 from py2many.exceptions import AstIncompatibleAssign, AstUnrecognisedBinOp
 from py2many.tracer import is_enum
 
-
 try:
-    from typpete.inference_runner import infer_types_ast
+    from typpete.context import Context
+    from typpete.inference_runner import infer as infer_types_ast
+    from typpete.z3_types import TypesSolver
 except ModuleNotFoundError:
 
     def infer_types_ast(node):
@@ -33,7 +41,13 @@ def infer_types(node) -> InferMeta:
 
 
 def infer_types_typpete(node) -> InferMeta:
-    infer_types_ast(node)
+    solver = TypesSolver(node)
+    context = Context(node, node.body, solver)
+    for stmt in node.body:
+        infer_types_ast(stmt, context, solver)
+
+    solver.push()
+
     return InferMeta(True)
 
 
@@ -159,8 +173,6 @@ class InferTypesTransformer(ast.NodeTransformer):
     def __init__(self):
         self.handling_annotation = False
         self.has_fixed_width_ints = False
-        # TODO: remove this and make the methods into classmethods
-        self._clike = CLikeTranspiler()
 
     @staticmethod
     def _infer_primitive(value) -> Optional[ast.AST]:
@@ -212,7 +224,7 @@ class InferTypesTransformer(ast.NodeTransformer):
                 for e in elements:
                     typ = get_inferred_type(e)
                     if typ is not None:
-                        elt_types.add(unparse(typ))
+                        elt_types.add(ast.unparse(typ))
                 if len(elt_types) == 0:
                     node.annotation = ast.Name(id="List")
                 elif len(elt_types) == 1:
@@ -228,7 +240,7 @@ class InferTypesTransformer(ast.NodeTransformer):
         self.generic_visit(node)
         if len(node.elts) > 0:
             elements = [self.visit(e) for e in node.elts]
-            elt_types = set([get_id(get_inferred_type(e)) for e in elements])
+            elt_types = {get_id(get_inferred_type(e)) for e in elements}
             if len(elt_types) == 1:
                 if hasattr(elements[0], "annotation"):
                     elt_type = get_id(elements[0].annotation)
@@ -244,28 +256,26 @@ class InferTypesTransformer(ast.NodeTransformer):
 
             def typename(e):
                 get_inferred_type(e)  # populates e.annotation
-                return self._clike._generic_typename_from_annotation(e)
+                return CLikeTranspiler._generic_typename_from_annotation(e)
 
-            key_types = set([typename(e) for e in node.keys])
+            key_types = {typename(e) for e in node.keys}
             only_key_type = next(iter(key_types))
             if len(key_types) == 1:
                 key_type = only_key_type
             else:
                 key_type = "Any"
-            value_types = set([typename(e) for e in node.values])
+            value_types = {typename(e) for e in node.values}
             only_value_type = next(iter(value_types))
             if len(value_types) == 1:
                 value_type = only_value_type
             else:
                 value_type = "Any"
             self._annotate(node, f"Dict[{key_type}, {value_type}]")
-            lifetimes = set(
-                [
-                    getattr(e.annotation, "lifetime", None)
-                    for e in node.values
-                    if hasattr(e, "annotation")
-                ]
-            )
+            lifetimes = {
+                getattr(e.annotation, "lifetime", None)
+                for e in node.values
+                if hasattr(e, "annotation")
+            }
             only_lifetime = next(iter(lifetimes)) if len(lifetimes) == 1 else None
             if len(lifetimes) == 1 and only_lifetime != None:
                 lifetime = only_lifetime
@@ -303,11 +313,11 @@ class InferTypesTransformer(ast.NodeTransformer):
 
         node.target.annotation = node.annotation
         target = node.target
-        target_typename = self._clike._typename_from_annotation(target)
+        target_typename = CLikeTranspiler._typename_from_annotation(target)
         if target_typename in self.FIXED_WIDTH_INTS_NAME:
             self.has_fixed_width_ints = True
         annotation = get_inferred_type(node.value)
-        value_typename = self._clike._generic_typename_from_type_node(annotation)
+        value_typename = CLikeTranspiler._generic_typename_from_type_node(annotation)
         target_class = class_for_typename(target_typename, None)
         value_class = class_for_typename(value_typename, None)
         if (
@@ -534,12 +544,16 @@ class InferTypesTransformer(ast.NodeTransformer):
     def visit_Subscript(self, node):
         definition = node.scopes.find(get_id(node.value))
         if hasattr(definition, "annotation"):
-            self._clike._typename_from_annotation(definition)
+            CLikeTranspiler._typename_from_annotation(definition)
             if hasattr(definition, "container_type"):
                 container_type, element_type = definition.container_type
                 if container_type == "Dict" or isinstance(element_type, list):
                     element_type = element_type[1]
-                node.annotation = ast.Name(id=element_type)
+                # we could check for lower/upper also
+                if hasattr(node.slice, "step"):
+                    node.annotation = definition.annotation
+                else:
+                    node.annotation = ast.Name(id=element_type)
                 if hasattr(definition.annotation, "lifetime"):
                     node.annotation.lifetime = definition.annotation.lifetime
         self.generic_visit(node)
@@ -551,13 +565,17 @@ class InferTypesTransformer(ast.NodeTransformer):
         if hasattr(node.iter, "annotation") and isinstance(
             node.iter.annotation, ast.Subscript
         ):
-            typ = self._clike._slice_value(node.iter.annotation)
+            typ = CLikeTranspiler._slice_value(node.iter.annotation)
 
             if isinstance(node.target, ast.Name):
                 node.target.annotation = typ
             elif isinstance(node.target, ast.Tuple) and isinstance(typ, ast.Subscript):
-                typ = self._clike._slice_value(typ)
+                typ = CLikeTranspiler._slice_value(typ)
                 for e in node.target.elts:
                     e.annotation = typ
         self.generic_visit(node)
+        return node
+
+    def visit_BoolOp(self, node: ast.BoolOp):
+        node.annotation = ast.Name(id="bool")
         return node

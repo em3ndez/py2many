@@ -1,16 +1,18 @@
 # Trace object types that are inserted into Python list.
 import ast
+
 from py2many.analysis import get_id
-from py2many.tracer import is_list, ValueExpressionVisitor, ValueTypeVisitor
-from pycpp.clike import CLikeTranspiler
+from py2many.tracer import ValueExpressionVisitor, ValueTypeVisitor, is_list
+
+from .clike import CLikeTranspiler
 
 
 def decltype(node):
     """Create C++ decltype statement"""
     if is_list(node):
-        return "std::vector<decltype({0})>".format(value_type(node))
+        return f"std::vector<decltype({value_type(node)})>"
     else:
-        return "decltype({0})".format(value_type(node))
+        return f"decltype({value_type(node)})"
 
 
 def value_expr(node):
@@ -41,7 +43,7 @@ class Py14ValueExpressionVisitor(ValueExpressionVisitor):
 
         if isinstance(var.assigned_from, ast.For):
             it = var.assigned_from.iter
-            return "std::declval<typename decltype({0})::value_type>()".format(
+            return "std::declval<typename decltype({})::value_type>()".format(
                 self.visit(it)
             )
         elif isinstance(var.assigned_from, ast.FunctionDef):

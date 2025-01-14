@@ -1,10 +1,9 @@
 import ast
 
-from .inference import KT_TYPE_MAP, KT_WIDTH_RANK
-
 from py2many.analysis import get_id
 from py2many.clike import CLikeTranspiler as CommonCLikeTranspiler
 
+from .inference import KT_CONTAINER_TYPE_MAP, KT_TYPE_MAP, KT_WIDTH_RANK
 
 # allowed as names in Python but treated as keywords in Kotlin
 kotlin_keywords = frozenset(
@@ -88,7 +87,8 @@ kotlin_keywords = frozenset(
 class CLikeTranspiler(CommonCLikeTranspiler):
     def __init__(self):
         super().__init__()
-        self._type_map = KT_TYPE_MAP
+        CommonCLikeTranspiler._type_map = KT_TYPE_MAP
+        CommonCLikeTranspiler._container_type_map = KT_CONTAINER_TYPE_MAP
         self._statement_separator = ""
         self._temp = 0
 
@@ -111,7 +111,7 @@ class CLikeTranspiler(CommonCLikeTranspiler):
 
     def visit_BinOp(self, node) -> str:
         if isinstance(node.op, ast.Pow):
-            return "pow({0}, {1})".format(self.visit(node.left), self.visit(node.right))
+            return f"pow({self.visit(node.left)}, {self.visit(node.right)})"
 
         left = self.visit(node.left)
         op = self.visit(node.op)

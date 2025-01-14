@@ -1,12 +1,7 @@
 class Foo {
+    fun bar(): Int = baz()
 
-    fun bar(): Int {
-        return baz()
-    }
-
-    fun baz(): Int {
-        return 10
-    }
+    fun baz(): Int = 10
 }
 
 fun main(argv: Array<String>) {

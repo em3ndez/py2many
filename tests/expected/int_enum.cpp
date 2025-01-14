@@ -1,9 +1,7 @@
 #include <cassert>   // NOLINT(build/include_order)
+#include <cstdint>   // NOLINT(build/include_order)
 #include <iostream>  // NOLINT(build/include_order)
 #include <map>       // NOLINT(build/include_order)
-
-#include "pycpp/runtime/builtins.h"  // NOLINT(build/include_order)
-#include "pycpp/runtime/sys.h"       // NOLINT(build/include_order)
 
 enum Colors : int {
   RED = 0,
@@ -38,10 +36,7 @@ inline void show() {
     std::cout << std::string{"Not R"};
     std::cout << std::endl;
   }
-  assert(color_map.size() != 0);
+  assert(static_cast<int>(color_map.size()) != 0);
 }
 
-int main(int argc, char** argv) {
-  pycpp::sys::argv = std::vector<std::string>(argv, argv + argc);
-  show();
-}
+int main(int argc, char** argv) { show(); }

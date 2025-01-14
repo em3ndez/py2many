@@ -1,10 +1,16 @@
 import ast
-
-from ctypes import c_int8, c_int16, c_int32, c_int64
-from ctypes import c_uint8, c_uint16, c_uint32, c_uint64
+from ctypes import (
+    c_int8,
+    c_int16,
+    c_int32,
+    c_int64,
+    c_uint8,
+    c_uint16,
+    c_uint32,
+    c_uint64,
+)
 
 from py2many.clike import CLikeTranspiler as CommonCLikeTranspiler
-
 
 dart_type_map = {
     bool: "bool",
@@ -20,6 +26,13 @@ dart_type_map = {
     c_uint16: "int",
     c_uint32: "int",
     c_uint64: "int",
+}
+
+DART_CONTAINER_TYPE_MAP = {
+    "List": "List",
+    "Dict": "Map",
+    "Set": "Set",
+    "Optional": "Nothing",
 }
 
 # allowed as names in Python but treated as keywords in Dart
@@ -65,7 +78,8 @@ dart_keywords = frozenset(
 class CLikeTranspiler(CommonCLikeTranspiler):
     def __init__(self):
         super().__init__()
-        self._type_map = dart_type_map
+        CommonCLikeTranspiler._type_map = dart_type_map
+        CommonCLikeTranspiler._container_type_map = DART_CONTAINER_TYPE_MAP
 
     def visit_Name(self, node) -> str:
         if node.id in dart_keywords:
@@ -74,7 +88,7 @@ class CLikeTranspiler(CommonCLikeTranspiler):
 
     def visit_BinOp(self, node) -> str:
         if isinstance(node.op, ast.Pow):
-            return "pow({0}, {1})".format(self.visit(node.left), self.visit(node.right))
+            return f"pow({self.visit(node.left)}, {self.visit(node.right)})"
 
         left = self.visit(node.left)
         op = self.visit(node.op)
@@ -93,4 +107,4 @@ class CLikeTranspiler(CommonCLikeTranspiler):
     def visit_In(self, node) -> str:
         left = self.visit(node.left)
         right = self.visit(node.comparators[0])
-        return "{0}.any({1})".format(right, left)
+        return f"{right}.any({left})"

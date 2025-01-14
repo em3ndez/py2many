@@ -1,4 +1,5 @@
 
+
 fun test(): Int {
     var a: Array<Int> = arrayOf(1, 2, 3)
     return a[1]

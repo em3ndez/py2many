@@ -1,13 +1,15 @@
 import os
 import unittest
-
-from distutils import spawn
 from pathlib import Path
 from shutil import rmtree
 from unittest.mock import Mock
 
 from py2many.cli import _get_all_settings, _process_dir
-from py2many.exceptions import AstTypeNotSupported
+from py2many.exceptions import (
+    AstNotImplementedError,
+    AstTypeNotSupported,
+    AstUnrecognisedBinOp,
+)
 
 SHOW_ERRORS = os.environ.get("SHOW_ERRORS", False)
 
@@ -47,6 +49,15 @@ def assert_only_reformat_failures(successful, format_errors, failures):
     assert format_errors
 
 
+def assert_counts(
+    successful, format_errors, failures, format_error_count, failure_count
+):
+    assert (
+        len(format_errors) == format_error_count
+    ), f"{len(format_errors)} != {format_error_count}"
+    assert len(failures) == failure_count, f"{len(failures)} != {failure_count}"
+
+
 class SelfTranspileTests(unittest.TestCase):
     SETTINGS = _get_all_settings(Mock(indent=4, extension=False))
 
@@ -63,13 +74,13 @@ class SelfTranspileTests(unittest.TestCase):
             )
         )
 
-        expected_file = OUT_DIR / "tests" / "test_clike.rs"
+        expected_file = OUT_DIR / "transpiler.rs"
         assert expected_file.is_file(), f"{expected_file} missing"
 
         assert_only_reformat_failures(
             *_process_dir(
                 settings, PY2MANY_MODULE, OUT_DIR, False, _suppress_exceptions=False
-            ),
+            )
         )
 
     def test_dart_recursive(self):
@@ -79,22 +90,48 @@ class SelfTranspileTests(unittest.TestCase):
         assert_only_reformat_failures(
             *_process_dir(
                 settings, transpiler_module, OUT_DIR, False, _suppress_exceptions=False
-            ),
+            )
         )
 
         assert_only_reformat_failures(
             *_process_dir(
                 settings, PY2MANY_MODULE, OUT_DIR, False, _suppress_exceptions=False
+            )
+        )
+
+    def test_dlang_recursive(self):
+        settings = self.SETTINGS["dlang"]
+        suppress_exceptions = (
+            False if SHOW_ERRORS else (AstNotImplementedError, AstUnrecognisedBinOp)
+        )
+
+        transpiler_module = ROOT_DIR / "pyd"
+
+        assert_some_failures(
+            *_process_dir(
+                settings,
+                transpiler_module,
+                OUT_DIR,
+                False,
+                _suppress_exceptions=suppress_exceptions,
             ),
+            expected_success={"clike.py"},
+        )
+        assert_counts(
+            *_process_dir(
+                settings,
+                PY2MANY_MODULE,
+                OUT_DIR,
+                False,
+                _suppress_exceptions=suppress_exceptions,
+            ),
+            format_error_count=10,
+            failure_count=17,
         )
 
     def test_kotlin_recursive(self):
         settings = self.SETTINGS["kotlin"]
-
-        suppress_exceptions = False
-        if not SHOW_ERRORS and settings.formatter:
-            if not spawn.find_executable(settings.formatter[0]):
-                suppress_exceptions = FileNotFoundError
+        suppress_exceptions = False if SHOW_ERRORS else AstTypeNotSupported
 
         transpiler_module = ROOT_DIR / "pykt"
         assert_only_reformat_failures(
@@ -114,17 +151,12 @@ class SelfTranspileTests(unittest.TestCase):
             False,
             _suppress_exceptions=suppress_exceptions,
         )
-        if suppress_exceptions:
-            raise unittest.SkipTest(f"{settings.formatter[0]} not available")
 
-        assert_only_reformat_failures(
-            successful,
-            format_errors,
-            failures,
-        )
+        assert_only_reformat_failures(successful, format_errors, failures)
 
     def test_go_recursive(self):
         settings = self.SETTINGS["go"]
+
         suppress_exceptions = False if SHOW_ERRORS else AstTypeNotSupported
 
         transpiler_module = ROOT_DIR / "pygo"
@@ -153,17 +185,18 @@ class SelfTranspileTests(unittest.TestCase):
                 "annotation_transformer.py",
                 "ast_helpers.py",
                 "astx.py",
-                "context.py",
                 "cli.py",
+                "context.py",
                 "declaration_extractor.py",
                 "exceptions.py",
+                "helpers.py",
                 "language.py",
                 "mutability_transformer.py",
                 "nesting_transformer.py",
+                "process_helpers.py",
                 "python_transformer.py",
                 "result.py",
                 "rewriters.py",
-                "smt.py",
                 "scope.py",
                 "toposort_modules.py",
                 "tracer.py",
@@ -172,6 +205,7 @@ class SelfTranspileTests(unittest.TestCase):
 
     def test_nim_recursive(self):
         settings = self.SETTINGS["nim"]
+        suppress_exceptions = False if SHOW_ERRORS else AstTypeNotSupported
 
         transpiler_module = ROOT_DIR / "pynim"
         assert_only_reformat_failures(
@@ -180,7 +214,7 @@ class SelfTranspileTests(unittest.TestCase):
                 transpiler_module,
                 OUT_DIR,
                 False,
-                _suppress_exceptions=False,
+                _suppress_exceptions=suppress_exceptions,
             )
         )
         assert_only_reformat_failures(
@@ -189,8 +223,8 @@ class SelfTranspileTests(unittest.TestCase):
                 PY2MANY_MODULE,
                 OUT_DIR,
                 False,
-                _suppress_exceptions=False,
-            ),
+                _suppress_exceptions=suppress_exceptions,
+            )
         )
 
     def test_cpp_recursive(self):
@@ -198,13 +232,9 @@ class SelfTranspileTests(unittest.TestCase):
 
         transpiler_module = ROOT_DIR / "pycpp"
         successful, format_errors, failures = _process_dir(
-            settings,
-            transpiler_module,
-            OUT_DIR,
-            False,
-            _suppress_exceptions=False,
+            settings, transpiler_module, OUT_DIR, False, _suppress_exceptions=False
         )
-        assert len(successful) >= 11
+        assert len(successful) == 5
 
         successful, format_errors, failures = _process_dir(
             settings, PY2MANY_MODULE, OUT_DIR, False, _suppress_exceptions=False
@@ -213,12 +243,7 @@ class SelfTranspileTests(unittest.TestCase):
 
     def test_julia_recursive(self):
         settings = self.SETTINGS["julia"]
-        suppress_exceptions = (False,)
-
-        if not SHOW_ERRORS:
-            if settings.formatter:
-                if not spawn.find_executable(settings.formatter[0]):
-                    suppress_exceptions = (FileNotFoundError,)
+        suppress_exceptions = False
 
         transpiler_module = ROOT_DIR / "pyjl"
         successful, format_errors, failures = _process_dir(
@@ -228,8 +253,7 @@ class SelfTranspileTests(unittest.TestCase):
             False,
             _suppress_exceptions=suppress_exceptions,
         )
-        if FileNotFoundError not in suppress_exceptions:
-            assert_only_reformat_failures(successful, format_errors, failures)
+        assert_only_reformat_failures(successful, format_errors, failures)
 
         successful, format_errors, failures = _process_dir(
             settings,
@@ -238,11 +262,35 @@ class SelfTranspileTests(unittest.TestCase):
             False,
             _suppress_exceptions=suppress_exceptions,
         )
-        if FileNotFoundError in suppress_exceptions:
-            raise unittest.SkipTest(f"{settings.formatter[0]} not available")
 
-        assert_only_reformat_failures(
-            successful,
-            format_errors,
-            failures,
+        assert_only_reformat_failures(successful, format_errors, failures)
+
+    def test_vlang_recursive(self):
+        settings = self.SETTINGS["vlang"]
+        suppress_exceptions = (
+            False if SHOW_ERRORS else (AstNotImplementedError, AstUnrecognisedBinOp)
+        )
+
+        transpiler_module = ROOT_DIR / "pyv"
+
+        assert_some_failures(
+            *_process_dir(
+                settings,
+                transpiler_module,
+                OUT_DIR,
+                False,
+                _suppress_exceptions=suppress_exceptions,
+            ),
+            expected_success={"clike.py"},
+        )
+        assert_counts(
+            *_process_dir(
+                settings,
+                PY2MANY_MODULE,
+                OUT_DIR,
+                False,
+                _suppress_exceptions=suppress_exceptions,
+            ),
+            format_error_count=10,
+            failure_count=12,
         )

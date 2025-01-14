@@ -1,10 +1,9 @@
 import ast
 
 from py2many.analysis import get_id
-from .inference import GO_TYPE_MAP, GO_WIDTH_RANK
-
 from py2many.clike import CLikeTranspiler as CommonCLikeTranspiler
 
+from .inference import GO_CONTAINER_TYPE_MAP, GO_TYPE_MAP, GO_WIDTH_RANK
 
 go_type_map = {
     "bool": "bool",
@@ -65,7 +64,8 @@ def go_symbol(node):
 class CLikeTranspiler(CommonCLikeTranspiler):
     def __init__(self):
         super().__init__()
-        self._type_map = GO_TYPE_MAP
+        CommonCLikeTranspiler._type_map = GO_TYPE_MAP
+        CLikeTranspiler._container_type_map = GO_CONTAINER_TYPE_MAP
 
     def visit(self, node) -> str:
         if type(node) in go_symbols:
@@ -81,7 +81,7 @@ class CLikeTranspiler(CommonCLikeTranspiler):
     def visit_BinOp(self, node) -> str:
         if isinstance(node.op, ast.Pow):
             self._usings.add('"math"')
-            return "math.Pow({0}, {1})".format(
+            return "math.Pow({}, {})".format(
                 self.visit(node.left), self.visit(node.right)
             )
 
@@ -108,7 +108,7 @@ class CLikeTranspiler(CommonCLikeTranspiler):
             return f"({left} {op} {right})"
 
     def visit_In(self, node) -> str:
-        self._usings.add('"github.com/adsharma/py2many/pygo/runtime"')
+        self._usings.add('"github.com/electrious/refutil"')
         element = self.visit(node.left)
         container = node.comparators[0]
         self._generic_typename_from_annotation(container)
@@ -116,8 +116,8 @@ class CLikeTranspiler(CommonCLikeTranspiler):
         if hasattr(container, "generic_container_type"):
             container_type, _ = container.generic_container_type
             if container_type in {"Set" or "Dict"}:
-                return f"pygo.MapContains({container_str}, {element})"
-        return f"pygo.Contains({container_str}, {element})"
+                return f"refutil.ContainsKey({container_str}, {element})"
+        return f"refutil.Contains({container_str}, {element})"
 
     def _recursive_expand(self, slice_value):
         if isinstance(slice_value, ast.Name):

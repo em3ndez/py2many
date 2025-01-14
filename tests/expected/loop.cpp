@@ -1,10 +1,8 @@
-#include <iostream>  // NOLINT(build/include_order)
-
-#include "pycpp/runtime/builtins.h"  // NOLINT(build/include_order)
-#include "pycpp/runtime/range.hpp"   // NOLINT(build/include_order)
-#include "pycpp/runtime/sys.h"       // NOLINT(build/include_order)
+#include <cppitertools/range.hpp>  // NOLINT(build/include_order)
+#include <cstdint>                 // NOLINT(build/include_order)
+#include <iostream>                // NOLINT(build/include_order)
 inline void for_with_break() {
-  for (auto i : rangepp::xrange(4)) {
+  for (auto i : iter::range(4)) {
     if (i == 2) {
       break;
     }
@@ -14,7 +12,7 @@ inline void for_with_break() {
 }
 
 inline void for_with_continue() {
-  for (auto i : rangepp::xrange(4)) {
+  for (auto i : iter::range(4)) {
     if (i == 2) {
       continue;
     }
@@ -24,8 +22,13 @@ inline void for_with_continue() {
 }
 
 inline void for_with_else() {
-  for (auto i : rangepp::xrange(4)) {
+  bool has_break = false;
+  for (auto i : iter::range(4)) {
     std::cout << i;
+    std::cout << std::endl;
+  }
+  if (has_break != true) {
+    std::cout << std::string{"OK"};
     std::cout << std::endl;
   }
 }
@@ -55,9 +58,9 @@ inline void while_with_continue() {
 }
 
 int main(int argc, char** argv) {
-  pycpp::sys::argv = std::vector<std::string>(argv, argv + argc);
   for_with_break();
   for_with_continue();
+  for_with_else();
   while_with_break();
   while_with_continue();
 }

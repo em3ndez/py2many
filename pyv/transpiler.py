@@ -2,17 +2,20 @@ import ast
 import string
 from typing import Dict, List, Optional, Set, Tuple, Union
 
-from py2many.tracer import is_list, defined_before
-from py2many.exceptions import AstNotImplementedError
 from py2many.analysis import get_id, is_mutable, is_void_function
 from py2many.ast_helpers import create_ast_node
+from py2many.clike import class_for_typename
+from py2many.declaration_extractor import DeclarationExtractor
+from py2many.exceptions import AstNotImplementedError
+from py2many.tracer import defined_before, is_list
 
 from .clike import CLikeTranspiler
 from .inference import V_WIDTH_RANK
 from .plugins import (
     ATTR_DISPATCH_TABLE,
-    FUNC_DISPATCH_TABLE,
+    CLASS_DISPATCH_TABLE,
     DISPATCH_MAP,
+    FUNC_DISPATCH_TABLE,
     SMALL_DISPATCH_MAP,
     SMALL_USINGS_MAP,
 )
@@ -135,21 +138,13 @@ class VNoneCompareRewriter(ast.NodeTransformer):
 class VTranspiler(CLikeTranspiler):
     NAME: str = "v"
 
-    CONTAINER_TYPE_MAP: Dict[str, str] = {
-        "List": "[]",
-        "Dict": "map",
-        "Set": "set",
-        "Optional": "?",
-    }
-
     ALLOW_MODULE_LIST: List[str] = ["math"]
 
     def __init__(self, indent: int = 2):
         super().__init__()
-        self._headers = set([])
+        self._headers = set()
         self._indent = " " * indent
-        self._default_type = "any"
-        self._container_type_map = self.CONTAINER_TYPE_MAP
+        CLikeTranspiler._default_type = "any"
         self._dispatch_map = DISPATCH_MAP
         self._small_dispatch_map = SMALL_DISPATCH_MAP
         self._small_usings_map = SMALL_USINGS_MAP
@@ -164,9 +159,10 @@ class VTranspiler(CLikeTranspiler):
         uses: str = "\n".join(f"import {mod}" for mod in usings)
         # Module statement needs to be here as uses is applied to the top of the file
         # but V expects the module statement to be at the top.
-        return f"module main\n{uses}"
+        return f"[translated]\nmodule main\n{uses}"
 
-    def _combine_value_index(self, value_type: str, index_type: str) -> str:
+    @classmethod
+    def _combine_value_index(cls, value_type, index_type) -> str:
         return f"{value_type}{index_type}"
 
     def comment(self, text: str) -> str:
@@ -193,19 +189,29 @@ class VTranspiler(CLikeTranspiler):
 
     def visit_FunctionDef(self, node) -> str:
         signature = ["fn"]
-        if node.scopes[-1] is ast.ClassDef:
-            raise AstNotImplementedError("Class methods are not supported yet.", node)
-        signature.append(node.name)
+        is_class_method: bool = False
+        if (
+            node.scopes is not None
+            and len(node.scopes) > 1
+            and isinstance(node.scopes[-2], ast.ClassDef)
+        ):
+            is_class_method = True
 
         generics: Set[str] = set()
         args: List[Tuple[str, str]] = []
+        receiver: str = ""
         for arg in node.args.args:
             typename, id = self.visit(arg)
-            if typename is None:  # receiver
-                typename = "<struct name>"  # TODO: fetch struct name from node.scopes
+            if typename is None and is_class_method:  # receiver
+                receiver = id
+                continue
             elif len(typename) == 1 and typename.isupper():
                 generics.add(typename)
             args.append((typename, id))
+
+        if is_class_method:
+            signature.append(f"({receiver} {get_id(node.scopes[-2])})")
+        signature.append(node.name)
 
         str_args: List[str] = []
         for typename, id in args:
@@ -214,6 +220,7 @@ class VTranspiler(CLikeTranspiler):
                     if c not in generics:
                         generics.add(c)
                         typename = c
+                        break
             if typename == "":
                 raise AstNotImplementedError(
                     "Cannot use more than 26 generics in a function.", node
@@ -235,7 +242,7 @@ class VTranspiler(CLikeTranspiler):
         return "return"
 
         if node.value:
-            return "return {0}".format(self.visit(node.value))
+            return f"return {self.visit(node.value)}"
         return "return"
 
     def visit_Lambda(self, node: ast.Lambda) -> str:
@@ -269,7 +276,7 @@ class VTranspiler(CLikeTranspiler):
                 value: str = self.visit(kw.value)
                 vargs += [f"{kw.arg}: {value}"]
         args: str = ", ".join(vargs)
-        return f"{fname}({args})"
+        return f"{fname}{{{args}}}"
 
     def visit_Call(self, node: ast.Call) -> str:
         fname: str = self.visit(node.func)
@@ -345,8 +352,8 @@ class VTranspiler(CLikeTranspiler):
         return f"[{', '.join(chars)}]"
 
     def visit_If(self, node: ast.If) -> str:
-        body_vars: Set[str] = set([get_id(v) for v in node.scopes[-1].body_vars])
-        orelse_vars: Set[str] = set([get_id(v) for v in node.scopes[-1].orelse_vars])
+        body_vars: Set[str] = {get_id(v) for v in node.scopes[-1].body_vars}
+        orelse_vars: Set[str] = {get_id(v) for v in node.scopes[-1].orelse_vars}
         node.common_vars = body_vars.intersection(orelse_vars)
 
         body: str = "\n".join(
@@ -372,14 +379,53 @@ class VTranspiler(CLikeTranspiler):
         if isinstance(node.op, ast.USub):
             if isinstance(node.operand, (ast.Call, ast.Num)):
                 # Shortcut if parenthesis are not needed
-                return "-{0}".format(self.visit(node.operand))
+                return f"-{self.visit(node.operand)}"
             else:
-                return "-({0})".format(self.visit(node.operand))
+                return f"-({self.visit(node.operand)})"
         else:
             return super().visit_UnaryOp(node)
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> str:
-        raise AstNotImplementedError("Classes are not supported yet.", node)
+    def visit_ClassDef(self, node) -> str:
+        extractor = DeclarationExtractor(VTranspiler())
+        extractor.visit(node)
+        node.declarations = declarations = extractor.get_declarations()
+        node.declarations_with_defaults = extractor.get_declarations_with_defaults()
+        node.class_assignments = extractor.class_assignments
+        ret = super().visit_ClassDef(node)
+        if ret is not None:
+            return ret
+
+        decorators = [get_id(d) for d in node.decorator_list]
+
+        decorators = [
+            class_for_typename(t, None, self._imported_names) for t in decorators
+        ]
+        for d in decorators:
+            if d in CLASS_DISPATCH_TABLE:
+                ret = CLASS_DISPATCH_TABLE[d](self, node)
+                if ret is not None:
+                    return ret
+
+        fields = []
+        if declarations:
+            fields.append("pub mut:")
+        index = 0
+        for declaration, typename in declarations.items():
+            if typename == None:
+                typename = f"ST{index}"
+                index += 1
+            fields.append(f"{declaration} {typename}")
+
+        for b in node.body:
+            if isinstance(b, ast.FunctionDef):
+                b.self_type = node.name
+
+        struct_def = "pub struct {0} {{\n{1}\n}}\n\n".format(
+            node.name, "\n".join(fields)
+        )
+        buf = [self.visit(b) for b in node.body]
+        buf_str = "\n".join(buf)
+        return f"{struct_def}{buf_str}"
 
     def visit_IntEnum(self, node: ast.ClassDef) -> str:
         raise AstNotImplementedError("Enums are not supported yet.", node)
@@ -402,14 +448,14 @@ class VTranspiler(CLikeTranspiler):
         keys: List[str] = [self.visit(k) for k in node.keys]
         values: List[str] = [self.visit(k) for k in node.values]
         kv_pairs: str = " ".join([f"{k}: {v}" for k, v in zip(keys, values)])
-        return f"map{{{kv_pairs}}}"
+        return f"{{{kv_pairs}}}"
 
     def visit_Subscript(self, node: ast.Subscript) -> str:
         value: str = self.visit(node.value)
         index: str = self.visit(node.slice)
         if hasattr(node, "is_annotation"):
-            if value in self.CONTAINER_TYPE_MAP:
-                value = self.CONTAINER_TYPE_MAP[value]
+            if value in self._container_type_map:
+                value = self._container_type_map[value]
             if value == "Tuple":
                 return f"({index})"
             return f"{value}[{index}]"
@@ -426,7 +472,7 @@ class VTranspiler(CLikeTranspiler):
         if node.upper:
             upper = self.visit(node.upper)
 
-        return "{0}..{1}".format(lower, upper)
+        return f"{lower}..{upper}"
 
     def visit_Elipsis(self, node) -> str:
         return ""
@@ -436,10 +482,45 @@ class VTranspiler(CLikeTranspiler):
         return self.visit_List(node)
 
     def visit_Try(self, node: ast.Try, finallybody: bool = None) -> str:
-        raise AstNotImplementedError("Exceptions are not supported yet.", node)
+        self._usings.add("div72.vexc")
+        buf = []
+        buf.append("if C.try() {")
+        buf.extend(map(self.visit, node.body))
+        buf.append("vexc.end_try()")
+        buf.append("}")
+        if len(node.handlers) == 1 and not node.handlers[0].type:
+            # Just except:
+            buf.append("else {")
+            buf.extend(map(self.visit, node.handlers[0].body))
+            buf.append("}")
+        elif node.handlers:
+            buf.append("else {")
+            buf.append("match vexc.get_curr_exc().name {")
+            has_else: bool = False
+            for handler in node.handlers:
+                buf2 = self.visit(handler)
+                if buf2.startswith("else"):
+                    has_else = True
+                buf.append(buf2)
+            if not has_else:
+                buf.append("else {}")
+            buf.append("}")
+            buf.append("}")
+        if node.finalbody:
+            buf.extend(map(self.visit, node.finalbody))
+        return "\n".join(buf)
 
     def visit_ExceptHandler(self, node) -> str:
-        raise AstNotImplementedError("Exceptions are not supported yet.", node)
+        buf = []
+        if node.type:
+            buf.append(f"'{get_id(node.type)}' {{")
+        else:
+            buf.append("else {")
+        if node.name:
+            buf.append(f"{node.name} := vexc.get_curr_exc()")
+        buf.extend(map(self.visit, node.body))
+        buf.append("}")
+        return "\n".join(buf)
 
     def visit_Assert(self, node: ast.Assert) -> str:
         return f"assert {self.visit(node.test)}"
@@ -512,13 +593,22 @@ class VTranspiler(CLikeTranspiler):
         target: str = self.visit(node.target)
         op: str = self.visit(node.op)
         val: str = self.visit(node.value)
-        return "{0} {1}= {2}".format(target, op, val)
+        return f"{target} {op}= {val}"
 
     def visit_Delete(self, node: ast.Delete) -> str:
         raise AstNotImplementedError("`delete` statements are not supported yet.", node)
 
     def visit_Raise(self, node: ast.Raise) -> str:
-        raise AstNotImplementedError("Exceptions are not supported yet.", node)
+        self._usings.add("div72.vexc")
+        name: str = f'"{get_id(node.exc)}"'
+        msg: str = '""'
+        if node.exc is None:
+            return "vexc.raise('Exception', '')"
+        elif isinstance(node.exc, ast.Call):
+            name = f'"{get_id(node.exc.func)}"'
+            if node.exc.args:
+                msg = self.visit(node.exc.args[0])
+        return f"vexc.raise({name}, {msg})"
 
     def visit_With(self, node: ast.With) -> str:
         raise AstNotImplementedError("`with` statements are not supported yet.", node)

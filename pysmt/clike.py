@@ -1,10 +1,9 @@
 import ast
 
-from .inference import SMT_TYPE_MAP, SMT_WIDTH_RANK
-
-from py2many.clike import CLikeTranspiler as CommonCLikeTranspiler
 from py2many.analysis import is_global
+from py2many.clike import CLikeTranspiler as CommonCLikeTranspiler
 
+from .inference import SMT_TYPE_MAP, SMT_WIDTH_RANK
 
 # allowed as names in Python but treated as keywords in Smt
 smt_keywords = frozenset([])
@@ -45,9 +44,9 @@ def smt_symbol(node):
 
 
 class CLikeTranspiler(CommonCLikeTranspiler):
-
     CONTAINER_TYPE_MAP = {
-        "List": "seq",
+        "List": "Seq",
+        "Tuple": "Array",
         "Dict": "Table",
         "Set": "set",
         "Optional": "Option",
@@ -56,8 +55,8 @@ class CLikeTranspiler(CommonCLikeTranspiler):
 
     def __init__(self):
         super().__init__()
-        self._type_map = SMT_TYPE_MAP
-        self._container_type_map = self.CONTAINER_TYPE_MAP
+        CommonCLikeTranspiler._type_map = SMT_TYPE_MAP
+        CommonCLikeTranspiler._container_type_map = self.CONTAINER_TYPE_MAP
         self._statement_separator = ""
 
     def visit(self, node):
@@ -70,7 +69,7 @@ class CLikeTranspiler(CommonCLikeTranspiler):
         return ""
 
     def visit_UnaryOp(self, node):
-        return "({0} {1})".format(self.visit(node.op), self.visit(node.operand))
+        return f"({self.visit(node.op)} {self.visit(node.operand)})"
 
     def visit_BoolOp(self, node):
         op = self.visit(node.op)
@@ -118,9 +117,6 @@ class CLikeTranspiler(CommonCLikeTranspiler):
     def visit_In(self, node):
         left = self.visit(node.left)
         right = self.visit(node.comparators[0])
-        left_type = self._typename_from_annotation(node.left)
-        if left_type == "string":
-            self._usings.add("strutils")
         return f"{left} in {right}"
 
     def visit_Expr(self, node) -> str:

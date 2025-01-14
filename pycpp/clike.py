@@ -1,11 +1,18 @@
 import ast
-
-from ctypes import c_int8, c_int16, c_int32, c_int64
-from ctypes import c_uint8, c_uint16, c_uint32, c_uint64
+from ctypes import (
+    c_int8,
+    c_int16,
+    c_int32,
+    c_int64,
+    c_uint8,
+    c_uint16,
+    c_uint32,
+    c_uint64,
+)
 
 from py2many.clike import CLikeTranspiler as CommonCLikeTranspiler
 
-pycpp_type_map = {
+PYCPP_TYPE_MAP = {
     bool: "bool",
     int: "int",
     float: "double",
@@ -127,9 +134,17 @@ cpp_keywords = frozenset(
 
 
 class CLikeTranspiler(CommonCLikeTranspiler):
+    CONTAINER_TYPE_MAP = {
+        "List": "std::vector",
+        "Dict": "std::map",
+        "Set": "std::set",
+        "Optional": "std::optional",
+    }
+
     def __init__(self):
         super().__init__()
-        self._type_map = pycpp_type_map
+        CommonCLikeTranspiler._type_map = PYCPP_TYPE_MAP
+        CommonCLikeTranspiler._container_type_map = self.CONTAINER_TYPE_MAP
 
     def _check_keyword(self, name):
         if name in cpp_keywords:
@@ -144,7 +159,8 @@ class CLikeTranspiler(CommonCLikeTranspiler):
 
     def visit_BinOp(self, node) -> str:
         if isinstance(node.op, ast.Pow):
-            return "std::pow({0}, {1})".format(
+            self._usings.add("<cmath>")
+            return "std::pow({}, {})".format(
                 self.visit(node.left), self.visit(node.right)
             )
         left = self.visit(node.left)

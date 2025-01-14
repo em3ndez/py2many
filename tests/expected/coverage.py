@@ -9,8 +9,7 @@ def inline_pass():
     pass
 
 
-def inline_ellipsis():
-    ...
+def inline_ellipsis(): ...
 
 
 def indexing() -> int:
@@ -80,7 +79,7 @@ def show():
     assert "bbc" in "aaabbccc"
     assert bool(1)
     2
-    (_c1, _c2) = (1, 3)
+    _c1, _c2 = (1, 3)
 
 
 if __name__ == "__main__":

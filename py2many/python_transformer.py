@@ -1,6 +1,6 @@
 import ast
 
-from .ast_helpers import create_ast_node, unparse
+from .ast_helpers import create_ast_node
 from .clike import CLikeTranspiler
 
 
@@ -19,8 +19,13 @@ class RestoreMainRewriter(ast.NodeTransformer):
 class PythonTranspiler(CLikeTranspiler):
     NAME = "python"
 
+    def __init__(self):
+        super().__init__()
+        CLikeTranspiler._type_map = {}
+        CLikeTranspiler._container_type_map = {}
+
     def visit(self, node):
-        return unparse(node)
+        return ast.unparse(node)
 
     def usings(self):
         return "\n".join(

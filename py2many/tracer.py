@@ -1,22 +1,19 @@
 # Trace object types that are inserted into Python list.
 
 import ast
+from collections.abc import Iterable
+from typing import Optional
 
 from py2many.analysis import get_id
 from py2many.clike import CLikeTranspiler
 from py2many.exceptions import AstNotImplementedError
 
-from typing import Optional
 
-
-def decltype(node):
-    """Create C++ decltype statement"""
-    pass
-
-
-# is it slow? is it correct?
+# TODO: is it slow? is it correct?
 def _lookup_class_or_module(name, scopes) -> Optional[ast.ClassDef]:
     for scope in scopes:
+        if not isinstance(scope.body, Iterable):
+            continue
         for entry in scope.body:
             if isinstance(entry, ast.ClassDef):
                 if entry.name == name:
@@ -36,7 +33,7 @@ def is_class_or_module(name, scopes):
 def is_enum(name, scopes):
     entry = _lookup_class_or_module(name, scopes)
     if entry and hasattr(entry, "bases"):
-        bases = set([get_id(base) for base in entry.bases])
+        bases = {get_id(base) for base in entry.bases}
         enum_bases = {"Enum", "IntEnum", "IntFlag"}
         return bases & enum_bases
     return False
@@ -69,6 +66,42 @@ def is_list(node):
         )
     else:
         return False
+
+
+# Searches for the first node of type node_type using
+# the given scope (search in reverse order)
+def find_node_by_type(node_type, scopes):
+    c_node = None
+    for i in range(len(scopes) - 1, -1, -1):
+        sc = scopes[i]
+        if isinstance(sc, node_type):
+            c_node = sc
+            break
+        if hasattr(sc, "body"):
+            c_node = find_in_body(sc.body, (lambda x: isinstance(x, node_type)))
+            if c_node is not None:
+                break
+    return c_node
+
+
+# Finds a node in the given body if it satisfies fn
+def find_in_body(body, fn):
+    for i in range(len(body) - 1, -1, -1):
+        node = body[i]
+        if fn(node):
+            return node
+        elif isinstance(node, ast.Expr) and hasattr(node, "value") and fn(node.value):
+            return node.value
+        elif hasattr(node, "iter") and fn(node.iter):
+            return node.iter
+        elif hasattr(node, "test") and fn(node.test):
+            return node.test
+        elif hasattr(node, "body"):
+            ret = find_in_body(node.body, fn)
+            if ret:
+                return ret
+
+    return None
 
 
 def value_expr(node):
@@ -123,7 +156,7 @@ class ValueExpressionVisitor(ast.NodeVisitor):
         if hasattr(var, "assigned_from"):
             if isinstance(var.assigned_from, ast.For):
                 it = var.assigned_from.iter
-                return "std::declval<typename decltype({0})::value_type>()".format(
+                return "std::declval<typename decltype({})::value_type>()".format(
                     self.visit(it)
                 )
             elif isinstance(var.assigned_from, ast.FunctionDef):
@@ -137,13 +170,13 @@ class ValueExpressionVisitor(ast.NodeVisitor):
         arg_strings = [self.visit(arg) for arg in node.args]
         arg_strings = [a for a in arg_strings if a is not None]
         params = ",".join(arg_strings)
-        return "{0}({1})".format(self.visit(node.func), params)
+        return f"{self.visit(node.func)}({params})"
 
     def visit_Assign(self, node):
         return self.visit(node.value)
 
     def visit_BinOp(self, node):
-        return "{0} {1} {2}".format(
+        return "{} {} {}".format(
             self.visit(node.left),
             CLikeTranspiler().visit(node.op),
             self.visit(node.right),
@@ -180,7 +213,7 @@ class ValueTypeVisitor(ast.NodeVisitor):
         if any(t is None for t in params):
             raise AstNotImplementedError(f"Call({params}) not implemented", node)
         params = ",".join(params)
-        return "{0}({1})".format(self.visit(node.func), params)
+        return f"{self.visit(node.func)}({params})"
 
     def visit_Attribute(self, node):
         value_id = get_id(node.value)

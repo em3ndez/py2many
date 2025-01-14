@@ -1,16 +1,24 @@
 import ast
-from ctypes import c_int8, c_int16, c_int32, c_int64
-from ctypes import c_uint8, c_uint16, c_uint32, c_uint64
+from ctypes import (
+    c_int8,
+    c_int16,
+    c_int32,
+    c_int64,
+    c_uint8,
+    c_uint16,
+    c_uint32,
+    c_uint64,
+)
 from typing import Dict
 
 from py2many.analysis import get_id
 from py2many.clike import class_for_typename
-from py2many.inference import get_inferred_type, InferTypesTransformer
-
+from py2many.exceptions import AstUnrecognisedBinOp
+from py2many.inference import InferTypesTransformer, get_inferred_type
 
 V_TYPE_MAP: Dict[type, str] = {
     int: "int",
-    float: "f32",
+    float: "f64",
     bytes: "[]byte",
     str: "string",
     bool: "bool",
@@ -22,6 +30,13 @@ V_TYPE_MAP: Dict[type, str] = {
     c_uint16: "u16",
     c_uint32: "u32",
     c_uint64: "u64",
+}
+
+V_CONTAINER_TYPE_MAP: Dict[str, str] = {
+    "List": "[]",
+    "Dict": "map",
+    "Set": "set",
+    "Optional": "?",
 }
 
 V_WIDTH_RANK: Dict[str, int] = {
@@ -152,5 +167,8 @@ class InferVTypesTransformer(ast.NodeTransformer):
             if (left_id, right_id) in {("int", "float"), ("float", "int")}:
                 node.v_annotation = map_type("float")
                 return node
+            if left_id == "str" and right_id == "int":
+                node.v_annotation = map_type("str")
+                return node
 
-            raise Exception(f"type error: {left_id} {type(node.op)} {right_id}")
+            raise AstUnrecognisedBinOp(left_id, right_id, node)

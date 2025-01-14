@@ -1,7 +1,5 @@
+#include <cstdint>   // NOLINT(build/include_order)
 #include <iostream>  // NOLINT(build/include_order)
-
-#include "pycpp/runtime/builtins.h"  // NOLINT(build/include_order)
-#include "pycpp/runtime/sys.h"       // NOLINT(build/include_order)
 inline void do_unsupported() {
   int a = 1;
   /* dict comprehension (key + 1, value + 1) unimplemented on line 9:4 */;
@@ -10,7 +8,4 @@ inline void do_unsupported() {
   std::cout << std::endl;
 }
 
-int main(int argc, char** argv) {
-  pycpp::sys::argv = std::vector<std::string>(argv, argv + argc);
-  do_unsupported();
-}
+int main(int argc, char** argv) { do_unsupported(); }
